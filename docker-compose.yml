@@ -1,0 +1,192 @@
+services:
+  # Main PostgreSQL Database
+  postgres_main:
+    image: postgres:15-alpine
+    container_name: benchmark_postgres_main
+    environment:
+      POSTGRES_DB: benchmark_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_main_data:/var/lib/postgresql/data
+      - ./migrations:/migrations
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - benchmark_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Redis for caching test
+  redis:
+    image: redis:7-alpine
+    container_name: benchmark_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - benchmark_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Split DB - Database 1 (for read operations)
+  postgres_read:
+    image: postgres:15-alpine
+    container_name: benchmark_postgres_read
+    environment:
+      POSTGRES_DB: benchmark_read_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_read_data:/var/lib/postgresql/data
+      - ./migrations:/migrations
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - benchmark_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Split DB - Database 2 (for write operations)
+  postgres_write:
+    image: postgres:15-alpine
+    container_name: benchmark_postgres_write
+    environment:
+      POSTGRES_DB: benchmark_write_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres123
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_write_data:/var/lib/postgresql/data
+      - ./migrations:/migrations
+      - ./scripts/init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    networks:
+      - benchmark_network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Golang Echo Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: benchmark_app
+    ports:
+      - "8080:8080"
+    environment:
+      # Main DB config
+      DB_HOST: postgres_main
+      DB_PORT: 5432
+      DB_NAME: benchmark_db
+      DB_USER: postgres
+      DB_PASSWORD: postgres123
+      
+      # Redis config
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      # Split DB config
+      DB_READ_HOST: postgres_read
+      DB_READ_PORT: 5432
+      DB_READ_NAME: benchmark_read_db
+      DB_WRITE_HOST: postgres_write
+      DB_WRITE_PORT: 5432
+      DB_WRITE_NAME: benchmark_write_db
+      
+      # App config
+      APP_ENV: development
+      APP_PORT: 8080
+    depends_on:
+      postgres_main:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      postgres_read:
+        condition: service_healthy
+      postgres_write:
+        condition: service_healthy
+    networks:
+      - benchmark_network
+    volumes:
+      - ./logs:/app/logs
+
+  # Goose Migration Tool
+  goose:
+    image: golang:1.21-alpine
+    container_name: benchmark_goose
+    working_dir: /app
+    volumes:
+      - ./migrations:/app/migrations
+      - ./scripts:/app/scripts
+    networks:
+      - benchmark_network
+    depends_on:
+      postgres_main:
+        condition: service_healthy
+      postgres_read:
+        condition: service_healthy
+      postgres_write:
+        condition: service_healthy
+    command: >
+      sh -c "
+        go install github.com/pressly/goose/v3/cmd/goose@latest &&
+        echo 'Running migrations on main database...' &&
+        goose -dir migrations postgres 'host=postgres_main port=5432 user=postgres password=postgres123 dbname=benchmark_db sslmode=disable' up &&
+        echo 'Running migrations on read database...' &&
+        goose -dir migrations postgres 'host=postgres_read port=5432 user=postgres password=postgres123 dbname=benchmark_read_db sslmode=disable' up &&
+        echo 'Running migrations on write database...' &&
+        goose -dir migrations postgres 'host=postgres_write port=5432 user=postgres password=postgres123 dbname=benchmark_write_db sslmode=disable' up &&
+        echo 'Migrations completed!'
+      "
+
+  # pgAdmin for database management (optional)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: benchmark_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@benchmark.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./pgadmin/servers.json:/pgadmin4/servers.json:ro
+    networks:
+      - benchmark_network
+    depends_on:
+      postgres_main:
+        condition: service_healthy
+      postgres_read:
+        condition: service_healthy
+      postgres_write:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_main_data:
+  postgres_read_data:
+  postgres_write_data:
+  redis_data:
+  pgadmin_data:
+
+networks:
+  benchmark_network:
+    driver: bridge

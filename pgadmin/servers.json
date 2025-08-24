@@ -1,0 +1,34 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Main Database",
+      "Group": "Benchmark Servers",
+      "Host": "postgres_main",
+      "Port": 5432,
+      "MaintenanceDB": "benchmark_db",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "Comment": "Main PostgreSQL database for benchmark testing"
+    },
+    "2": {
+      "Name": "Read Database",
+      "Group": "Benchmark Servers",
+      "Host": "postgres_read",
+      "Port": 5432,
+      "MaintenanceDB": "benchmark_read_db",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "Comment": "Read-only database for split DB testing"
+    },
+    "3": {
+      "Name": "Write Database",
+      "Group": "Benchmark Servers",
+      "Host": "postgres_write",
+      "Port": 5432,
+      "MaintenanceDB": "benchmark_write_db",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "Comment": "Write-only database for split DB testing"
+    }
+  }
+}
